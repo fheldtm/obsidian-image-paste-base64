@@ -1,4 +1,4 @@
-import { App, Editor, MarkdownFileInfo, MarkdownView, Plugin, Notice, type TFile, PluginSettingTab, Setting } from 'obsidian';
+import { App, Editor, MarkdownFileInfo, MarkdownView, Plugin, Notice, type TFile, PluginSettingTab, Setting, Modal, ButtonComponent } from 'obsidian';
 import { v4 } from 'uuid';
 
 interface MyPluginSettings {
@@ -25,9 +25,20 @@ const fileToBase64 = (file: File): Promise<string> => {
 const getImageMap = async (plugin: ImagePasteBase64Plugin) => {
   const adapter = plugin.app.vault.adapter as any;
   const path = adapter.path;
+
+  const dirpath = path.join(plugin.settings.BASE64_DIR);
+  const isImageDir = await adapter.exists(dirpath)
+  if (!isImageDir) {
+    await adapter.mkdir(dirpath)
+  }
+
   const filepath = path.join(plugin.settings.BASE64_DIR, plugin.settings.BASE64_FILENAME);
   const isImageJSON = await adapter.exists(filepath)
-  return JSON.parse(isImageJSON ? await adapter.read(filepath) : '{}')
+  if (!isImageJSON) {
+    await adapter.write(filepath, JSON.stringify({}, null, 2))
+  }
+
+  return JSON.parse(await adapter.read(filepath));
 }
 
 const updateImageMap = async (plugin: ImagePasteBase64Plugin, name: string, base64: string, filepath: string): Promise<string> => {
@@ -61,6 +72,7 @@ const updateImageMap = async (plugin: ImagePasteBase64Plugin, name: string, base
   // imageMap을 저장합니다.
   const adapter = plugin.app.vault.adapter as any;
   const path = adapter.path;
+
   await adapter.write(
     path.join(plugin.settings.BASE64_DIR, plugin.settings.BASE64_FILENAME),
     JSON.stringify(imageMap, null, 2)
@@ -71,7 +83,7 @@ const updateImageMap = async (plugin: ImagePasteBase64Plugin, name: string, base
 }
 
 const updateImageJSON = async (markdownFiles: TFile[], plugin: ImagePasteBase64Plugin) => {
-  const hashArrays = await Promise.all(
+  const idArrays = await Promise.all(
     markdownFiles.map(async (file) => {
       const content = await plugin.app.vault.adapter.read(file.path);
 
@@ -79,33 +91,26 @@ const updateImageJSON = async (markdownFiles: TFile[], plugin: ImagePasteBase64P
       const regex = /```image-base64([\s\S]*?)```/g;
       const matches = content.match(regex);
 
-      // 해당 matches 에서 hash: uuid에서 uuid를 가져오는 정규식
-      const hashRegex = /hash: ([\s\S]*?)\n/g;
-      const hashMatches = matches?.map((match) => match.match(hashRegex)?.[0] || '').map((hash) => hash.replace('hash: ', '').replace('\n', '')) || [];
+      // 해당 matches 에서 id: uuid에서 uuid를 가져오는 정규식
+      const idRegex = /id: ([\s\S]*?)\n/g;
+      const idMatches = matches?.map((match) => match.match(idRegex)?.[0] || '').map((id) => id.replace('id: ', '').replace('\n', '')) || [];
 
-      return hashMatches;
+      return idMatches;
     })
   );
 
-  const imageHashs = [
+  const imageIds = [
     'encryptedImageJsonData',
-    ...new Set(hashArrays.flatMap((hashArray) => hashArray))
+    ...new Set(idArrays.flatMap((idArray) => idArray))
   ];
 
   const imageMap = await getImageMap(plugin);
   const imageKeys = Object.keys(imageMap);
-  const deletedImageKeys = imageKeys.filter((key) => !imageHashs.includes(key));
+  const deletedImageKeys = imageKeys.filter((key) => !imageIds.includes(key));
 
-  deletedImageKeys.forEach((key) => {
-    delete imageMap[key];
-  })
+  if (deletedImageKeys.length === 0) return;
 
-  const adapter = plugin.app.vault.adapter as any;
-  const path = adapter.path;
-  await adapter.write(
-    path.join(plugin.settings.BASE64_DIR, plugin.settings.BASE64_FILENAME),
-    JSON.stringify(imageMap, null, 2)
-  )
+  new UnusedImageCheckModal(plugin, deletedImageKeys).open();
 }
 
 export default class ImagePasteBase64Plugin extends Plugin {
@@ -119,11 +124,11 @@ export default class ImagePasteBase64Plugin extends Plugin {
 
       const lines = source.split('\n');
       const imgName = lines.find(line => line.includes('name:'))?.split('name:')[1]?.trim() || `pasted-image-${Date.now()}`;
-      const imgHash = lines.find(line => line.includes('hash:'))?.split('hash:')[1]?.trim() || '';
+      const imgId = lines.find(line => line.includes('id:'))?.split('id:')[1]?.trim() || '';
 
       // add img tag to el
       const img = document.createElement('img');
-      img.src = imageMap[imgHash];
+      img.src = imageMap[imgId];
       img.alt = imgName;
       await new Promise((resolve) => img.onload = () => resolve(''));
       el.appendChild(img);
@@ -131,16 +136,16 @@ export default class ImagePasteBase64Plugin extends Plugin {
       el.nextElementSibling?.setAttribute('aria-label', '');
     });
 
-    const writeMarkdown = async (fileHash: string, editor: Editor, info: MarkdownView | MarkdownFileInfo, multi = false) => {
+    const writeMarkdown = async (fileId: string, editor: Editor, info: MarkdownView | MarkdownFileInfo, multi = false) => {
       const filename = `pasted-image-${Date.now()}`;
       const path = info.file?.path;
 
-      const uuid = await updateImageMap(this, filename, fileHash, path || '')
+      const uuid = await updateImageMap(this, filename, fileId, path || '')
       if (uuid === '') return;
 
       let fileMarkdown = '```image-base64\n';
       fileMarkdown += `name: ${filename}\n`;
-      fileMarkdown += `hash: ${uuid}\n`;
+      fileMarkdown += `id: ${uuid}\n`;
       fileMarkdown += '```\n';
       if (multi) {
         fileMarkdown += '\n';
@@ -155,8 +160,8 @@ export default class ImagePasteBase64Plugin extends Plugin {
     const fileConverter = async (files: FileList, editor: Editor, info: MarkdownView | MarkdownFileInfo) => {
       for (let i = 0; i < files.length; i++) {
         // file to base64
-        const fileHash = await fileToBase64(files[i])
-        await writeMarkdown(fileHash, editor, info, files.length > 1);
+        const fileId = await fileToBase64(files[i])
+        await writeMarkdown(fileId, editor, info, files.length > 1);
       }
     }
 
@@ -193,6 +198,19 @@ export default class ImagePasteBase64Plugin extends Plugin {
 
     this.addSettingTab(new ImagePasteBase64SettingTab(this.app, this));
 
+    // Unused image check
+    this.addRibbonIcon('trash', 'Remove unused base64 image', (evt: MouseEvent) => {
+      updateImageJSON(this.app.vault.getMarkdownFiles(), this);
+		});
+    // command
+    this.addCommand({
+      id: 'remove-unused-base64-image',
+      name: 'Remove unused base64 image',
+      callback: () => {
+        updateImageJSON(this.app.vault.getMarkdownFiles(), this);
+      }
+    });
+
     const interval = window.setInterval(() => {
       const markdownFiles = this.app.vault.getMarkdownFiles();
       if (markdownFiles.length === 0) return;
@@ -210,6 +228,103 @@ export default class ImagePasteBase64Plugin extends Plugin {
 	async saveSettings() {
 		await this.saveData(this.settings);
 	}
+}
+
+class UnusedImageCheckModal extends Modal {
+  keys: string[];
+  keyIndex: number;
+  plugin: ImagePasteBase64Plugin;
+
+	constructor(plugin: ImagePasteBase64Plugin, key: string[]) {
+		super(plugin.app);
+
+    this.keys = key;
+    this.plugin = plugin;
+    this.keyIndex = 0;
+	}
+
+	async onOpen() {
+		const { contentEl } = this;
+
+    // create header
+    contentEl.createEl('h2', {
+      text: 'Unused Image Check',
+      attr: {
+        style: 'margin: 0;'
+      }
+    });
+
+		contentEl.createEl('p', {
+      text: 'Are you sure you want to delete the unused base64 image?'
+    });
+
+    const iamgeWrap = contentEl.createEl('div', {
+      attr: {
+        style: 'width: 100%; display: flex; justify-content: center;'
+      }
+    });
+    
+    this.showImage(iamgeWrap)
+
+    const btnWrap = contentEl.createEl('div', {
+      attr: {
+        style: 'display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;'
+      }
+    })
+
+    // skip button
+    new ButtonComponent(btnWrap)
+      .setButtonText('Skip')
+      .onClick(() => {
+        this.keyIndex = this.keyIndex += 1;
+        if (this.keyIndex === this.keys.length) {
+          this.close();
+          return;
+        }
+
+        this.showImage(iamgeWrap)
+      })
+
+    // delete button
+    new ButtonComponent(btnWrap)
+      .setButtonText('Delete')
+      .onClick(async () => {
+        const key = this.keys[this.keyIndex];
+        const imageMap = await getImageMap(this.plugin);
+        delete imageMap[key];
+        this.plugin.app.vault.adapter.write(
+          (this.plugin.app.vault.adapter as any).path.join(this.plugin.settings.BASE64_DIR, this.plugin.settings.BASE64_FILENAME),
+          JSON.stringify(imageMap, null, 2)
+        )
+        this.keyIndex = this.keyIndex += 1;
+        if (this.keyIndex === this.keys.length) {
+          this.close();
+          return;
+        }
+
+        this.showImage(iamgeWrap)
+      })
+	}
+
+	onClose() {
+		const { contentEl } = this;
+		contentEl.empty();
+	}
+
+  async showImage (wrap: HTMLElement) {
+    const imageMap = await getImageMap(this.plugin);
+    const key = this.keys[this.keyIndex];
+    const imageBase64 = imageMap[key];
+
+    wrap.empty();
+
+    wrap.createEl('img', {
+      attr: {
+        src: imageBase64,
+        style: 'width: auto; max-width: 100%; max-height: 250px;'
+      }
+    })
+  }
 }
 
 class ImagePasteBase64SettingTab extends PluginSettingTab {

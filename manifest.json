@@ -3,8 +3,8 @@
 	"name": "Image Paste Base64",
 	"version": "0.0.1",
 	"minAppVersion": "0.15.0",
-	"description": "When you paste an image, it will be converted to base64 and inserted as a data URI.",
-	"author": "cjlee",
+	"description": "When you paste or drage image, it will be converted to base64 and inserted as a data URI codeblock format.",
+	"author": "fheldtm",
 	"authorUrl": "https://github.com/fheldtm",
 	"fundingUrl": "https://obsidian.md/pricing",
 	"isDesktopOnly": false
