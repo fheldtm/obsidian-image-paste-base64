@@ -1,0 +1,33 @@
+.block-language-image-base64 {
+  display: flex;
+  position: relative;
+  justify-content: center;
+  padding: 10px 0;
+}
+.block-language-image-base64 + .edit-block-button {
+  position: absolute;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  opacity: 0 !important;
+  --cursor: pointer;
+}
+.block-language-image-base64:empty {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 4;
+  background: #f0f0f0 url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 53.36 43.38"><path d="M12.81 9.81h27.75v23.75H12.81z" fill="none" stroke="%23777" stroke-width="1.2" stroke-miterlimit="10"/><path d="M21.86 14.95l7.57 13.03 5.66-6.76 4.89 7.98.57.66v3.7H12.81v-8.47z" fill="%23777"/><circle fill="%23777" cx="33.16" cy="15.09" r="2.26"/></svg>') center / 30% no-repeat;
+}
+.image-base64-container {
+  padding: 0 10px !important;
+}
+.image-base64-container,
+.image-base64-container:hover {
+  box-shadow: none !important;
+}
+.image-base64-container img {
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.4) !important;
+  border-radius: 0px !important;
+  overflow: hidden !important;
+}
